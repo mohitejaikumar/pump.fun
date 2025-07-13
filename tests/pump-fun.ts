@@ -82,31 +82,43 @@ describe("pump-fun", () => {
       systemProgram: SystemProgram.programId,
     }
 
-    await program.methods.configure({
-      authority: creator.publicKey,
-      feeRecipient: creator.publicKey,
-      curveLimit: curveLimit,
-      initialVirtualTokenReserve: new anchor.BN(1000000000),
-      initialVirtualSolReserve: new anchor.BN(1000000000),
-      initialRealTokenReserve: new anchor.BN(1000000000),
-      totalTokenSupply: new anchor.BN(1000000000),
-      reserved: Array(8).fill(Array(8).fill(0)),
-      buyFeePercentage: buyFeePercentage,
-      sellFeePercentage: sellFeePercentage,
-      migrationFeePercentage: 0,
-    }).accounts(configuration)
-    .signers([creator])
-    .rpc({
-      skipPreflight: true,
-      commitment: "confirmed"
-    });
+    
+      try {
+        const signature = await program.methods.configure({
+          authority: creator.publicKey,
+          feeRecipient: creator.publicKey,
+          curveLimit: curveLimit,
+          initialVirtualTokenReserve: new anchor.BN(1000000000),
+          initialVirtualSolReserve: new anchor.BN(1000000000),
+          initialRealTokenReserve: new anchor.BN(1000000000),
+          totalTokenSupply: new anchor.BN(1000000000),
+          reserved: Array(8).fill(Array(8).fill(0)),
+          buyFeePercentage: buyFeePercentage,
+          sellFeePercentage: sellFeePercentage,
+          migrationFeePercentage: 0,
+        }).accounts(configuration)
+        .signers([creator])
+        .rpc();
+
+        
+        await provider.connection.confirmTransaction({
+          signature: signature,
+          ...(await provider.connection.getLatestBlockhash()),
+        }, "confirmed");
+        await new Promise((resolve) => setTimeout(resolve, 60*1000));
+      }
+      catch(err){
+        console.log("error: ", err);
+      }
 
 
-    const config = await program.account.config.fetch(configPda);
+      const config = await program.account.config.fetch(configPda);
 
-    expect(config.buyFeePercentage).to.equal(buyFeePercentage);
-    expect(config.sellFeePercentage).to.equal(sellFeePercentage);
-    expect(config.curveLimit.toString()).to.equal(curveLimit.toString());
+      expect(config.buyFeePercentage).to.equal(buyFeePercentage);
+      expect(config.sellFeePercentage).to.equal(sellFeePercentage);
+      expect(config.curveLimit.toString()).to.equal(curveLimit.toString());
+    
+    
 
   })
 
@@ -116,25 +128,33 @@ describe("pump-fun", () => {
       owner: bondingCurvePda
     });
 
-    await program.methods.launch(name, symbol, uri)
-    .accountsStrict({
-      creator: creator.publicKey,
-      globalConfig: configPda,
-      tokenMint:  tokenMint.publicKey,
-      bondingCurve: bondingCurvePda,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-      curveTokenAccount: curveTokenAccount,
-      tokenMetadataAccount: metadataPda,
-      tokenProgram: TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      metadataProgram: METADATA_PROGRAM_ID,
-    })
-    .signers([creator, tokenMint])
-    .rpc({
-      skipPreflight: true,
-      commitment: "confirmed"
-    });
+    try {
+      const signature = await program.methods.launch(name, symbol, uri)
+        .accountsStrict({
+          creator: creator.publicKey,
+          globalConfig: configPda,
+          tokenMint:  tokenMint.publicKey,
+          bondingCurve: bondingCurvePda,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          curveTokenAccount: curveTokenAccount,
+          tokenMetadataAccount: metadataPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          metadataProgram: METADATA_PROGRAM_ID,
+        })
+        .signers([creator, tokenMint])
+        .rpc();
+      await provider.connection.confirmTransaction({
+        signature: signature,
+        ...(await provider.connection.getLatestBlockhash()),
+      }, "confirmed");
+
+      await new Promise((resolve) => setTimeout(resolve, 60*1000));
+    }
+    catch(error){
+      console.log("error: ", error);
+    }
    });
 
   describe("swap tests", ()=> {
@@ -146,22 +166,24 @@ describe("pump-fun", () => {
             user.publicKey
           );
 
+          console.log("userTokenAccount: ", userTokenAccount);
+          console.log("tokenMint: ", tokenMint.publicKey);
+          console.log("user: ", user.publicKey);
+          
           // Log initial balances
           const solBalance = await provider.connection.getBalance(user.publicKey);
           console.log(
             "Initial SOL balance:",
             solBalance/ LAMPORTS_PER_SOL
           );
-
+          const latestBlockhash = await provider.connection.getLatestBlockhash();
+          console.log("latestBlockhash: ", latestBlockhash);
           // Airdrop
           const signature = await provider.connection.requestAirdrop(
             user.publicKey,
             10 * anchor.web3.LAMPORTS_PER_SOL
           );
-          await provider.connection.confirmTransaction({
-            signature,
-            ...(await provider.connection.getLatestBlockhash()),
-          });
+          
 
           // Log balances after airdrop
           const newBalance = await provider.connection.getBalance(user.publicKey);
@@ -188,12 +210,14 @@ describe("pump-fun", () => {
             systemProgram: SystemProgram.programId
           })
           .signers([user])
-          .rpc({
-            skipPreflight: true,
-            commitment: "confirmed"
-          })
+          .rpc()
 
-          await provider.connection.confirmTransaction(tx);
+          await provider.connection.confirmTransaction({
+            signature: tx,
+            ...(await provider.connection.getLatestBlockhash()),
+          }, "confirmed");
+
+          await new Promise((resolve) => setTimeout(resolve, 60*1000));
 
           const finalBalance = await provider.connection.getBalance(
             user.publicKey

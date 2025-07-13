@@ -2,8 +2,11 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum PumpFunError {
-    #[msg("Unauthorized address")]
+    #[msg("Hello jaikumar")]
     UnauthorizedAddress,
+
+    #[msg("Can not change the authority")]
+    CannotChangeAuthority,
 
     #[msg("Curve limit reached")]
     CurveLimitReached,

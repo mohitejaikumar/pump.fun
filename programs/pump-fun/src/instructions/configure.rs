@@ -33,13 +33,17 @@ impl<'info> Configure<'info> {
                 self.global_config.authority == self.admin.key(),
                 PumpFunError::UnauthorizedAddress
             );
+            // Ensure authority cannot be changed from original creator
+            require!(
+                new_config.authority.eq(&self.global_config.authority),
+                PumpFunError::CannotChangeAuthority
+            );
         }
 
-        // Ensure authority cannot be changed from original creator
         require!(
-            new_config.authority.eq(&self.global_config.authority),
+            !new_config.authority.eq(&Pubkey::default()),
             PumpFunError::UnauthorizedAddress
-        );  
+        );
 
         // Copy all fields from ConfigSettings to Config
         self.global_config.authority = new_config.authority;
