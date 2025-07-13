@@ -5,6 +5,7 @@ import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram } from "@solana/web
 import { assert, expect } from "chai";
 import { before } from "mocha";
 import BN from "bn.js";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 
 const METADATA_PROGRAM_ID = new PublicKey(
@@ -33,7 +34,7 @@ describe("pump-fun", () => {
   let bondingCurvePda: PublicKey;
   let curveTokenAccount: PublicKey;
   let userTokenAccount: PublicKey;
-  let tokenMint: PublicKey;
+  let tokenMint: Keypair;
   let metadataPda: PublicKey;
 
 
@@ -57,19 +58,19 @@ describe("pump-fun", () => {
       program.programId
     );
 
-    tokenMint = Keypair.generate().publicKey;
+    tokenMint = Keypair.generate();
 
     [bondingCurvePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("bonding_curve"), tokenMint.toBuffer()],
+      [Buffer.from("bonding_curve"), tokenMint.publicKey.toBuffer()],
       program.programId
     );
 
     [metadataPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("metadata"), 
         METADATA_PROGRAM_ID.toBuffer(),
-        tokenMint.toBuffer()
+        tokenMint.publicKey.toBuffer()
       ],
-      program.programId
+      METADATA_PROGRAM_ID
     );
   });
 
@@ -106,6 +107,31 @@ describe("pump-fun", () => {
 
   })
 
+   it("Can launch", async ()=> {
+    curveTokenAccount = await anchor.utils.token.associatedAddress({
+      mint: tokenMint.publicKey,
+      owner: bondingCurvePda
+    });
 
+    await program.methods.launch(name, symbol, uri)
+    .accountsStrict({
+      creator: creator.publicKey,
+      globalConfig: configPda,
+      tokenMint:  tokenMint.publicKey,
+      bondingCurve: bondingCurvePda,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      curveTokenAccount: curveTokenAccount,
+      tokenMetadataAccount: metadataPda,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      metadataProgram: METADATA_PROGRAM_ID,
+    })
+    .signers([creator, tokenMint])
+    .rpc();
+
+
+    
+   })
   
 });
