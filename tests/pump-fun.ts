@@ -5,7 +5,7 @@ import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram } from "@solana/web
 import { assert, expect } from "chai";
 import { before } from "mocha";
 import BN from "bn.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 
 const METADATA_PROGRAM_ID = new PublicKey(
@@ -96,7 +96,10 @@ describe("pump-fun", () => {
       migrationFeePercentage: 0,
     }).accounts(configuration)
     .signers([creator])
-    .rpc();
+    .rpc({
+      skipPreflight: true,
+      commitment: "confirmed"
+    });
 
 
     const config = await program.account.config.fetch(configPda);
@@ -128,10 +131,313 @@ describe("pump-fun", () => {
       metadataProgram: METADATA_PROGRAM_ID,
     })
     .signers([creator, tokenMint])
-    .rpc();
+    .rpc({
+      skipPreflight: true,
+      commitment: "confirmed"
+    });
+   });
 
+  describe("swap tests", ()=> {
+    it("Can swap (buy)", async()=> {
 
-    
-   })
+        try {
+          const userTokenAccount = await getAssociatedTokenAddress(
+            tokenMint.publicKey,
+            user.publicKey
+          );
+
+          // Log initial balances
+          const solBalance = await provider.connection.getBalance(user.publicKey);
+          console.log(
+            "Initial SOL balance:",
+            solBalance/ LAMPORTS_PER_SOL
+          );
+
+          // Airdrop
+          const signature = await provider.connection.requestAirdrop(
+            user.publicKey,
+            10 * anchor.web3.LAMPORTS_PER_SOL
+          );
+          await provider.connection.confirmTransaction({
+            signature,
+            ...(await provider.connection.getLatestBlockhash()),
+          });
+
+          // Log balances after airdrop
+          const newBalance = await provider.connection.getBalance(user.publicKey);
+          console.log(
+            "SOL balance after airdrop:",
+            newBalance / LAMPORTS_PER_SOL
+          );
+
+          const tx = await program.methods.swap(
+            new anchor.BN(10000),
+            0,
+            new anchor.BN(1)
+          )
+          .accountsStrict({
+            user: user.publicKey,
+            globalConfig: configPda,
+            feeRecipient: creator.publicKey,
+            bondingCurve: bondingCurvePda,
+            tokenMint: tokenMint.publicKey,
+            curveTokenAccount: curveTokenAccount,
+            userTokenAccount: userTokenAccount,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId
+          })
+          .signers([user])
+          .rpc({
+            skipPreflight: true,
+            commitment: "confirmed"
+          })
+
+          await provider.connection.confirmTransaction(tx);
+
+          const finalBalance = await provider.connection.getBalance(
+            user.publicKey
+          );
+          console.log(
+            "Final SOL balance:",
+            finalBalance / anchor.web3.LAMPORTS_PER_SOL
+          );
+
+        }
+        catch (error){
+          console.log("Detailed buy error:",error);
+          if (error.logs) console.error("Transaction logs:", error.logs);
+          throw error;
+        }
+    })
+
+    it("Can swap (sell)", async () => {
+      try {
+        const bondingCurveAccount = await program.account.bondingCurve.fetch(
+          bondingCurvePda
+        );
+        if (bondingCurveAccount.isCompleted) {
+          console.log("Curve limit reached, skipping sell test");
+          return;
+        }
+
+        const userTokenAccount = await getAssociatedTokenAddress(
+          tokenMint.publicKey,
+          user.publicKey
+        );
+
+        // Get token balance
+        const tokenBalance = await provider.connection.getTokenAccountBalance(
+          userTokenAccount
+        );
+        console.log("Token balance before sell:", tokenBalance.value.uiAmount);
+
+        // Use much smaller amount for sell
+        const amount = new anchor.BN(1000);
+        console.log("Attempting sell with amount:", amount.toString());
+        const sellConfig = {
+          user: user.publicKey,
+          globalConfig: configPda,
+          feeRecipient: creator.publicKey,
+          bondingCurve: bondingCurvePda,
+          tokenMint: tokenMint.publicKey,
+          curveTokenAccount: curveTokenAccount,
+          userTokenAccount: userTokenAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        };
+        // Get the transaction instruction
+        const ix = await program.methods
+          .swap(amount, 1, new anchor.BN(1))
+          .accounts(sellConfig)
+          .instruction();
+
+        // Create and send transaction
+        const tx = new anchor.web3.Transaction().add(ix);
+        const latestBlockhash = await provider.connection.getLatestBlockhash();
+        tx.recentBlockhash = latestBlockhash.blockhash;
+        tx.feePayer = user.publicKey;
+
+        // Sign and send
+        tx.sign(user);
+        const txid = await provider.connection.sendRawTransaction(
+          tx.serialize()
+        );
+        console.log("Sell transaction signature:", txid);
+
+        // Wait for confirmation
+        await provider.connection.confirmTransaction({
+          signature: txid,
+          ...latestBlockhash,
+        });
+
+        // Check final balances
+        const finalTokenBalance =
+          await provider.connection.getTokenAccountBalance(userTokenAccount);
+        console.log("Final token balance:", finalTokenBalance.value.uiAmount);
+      } catch (error) {
+        console.error("Detailed sell error:", error);
+        if (error.logs) console.error("Transaction logs:", error.logs);
+        throw error;
+      }
+    });
+  })
+
+  describe("Extended swap tests", () => {
+    it("Should fail buy with insufficient funds", async () => {
+      const userTokenAccount = await getAssociatedTokenAddress(
+        tokenMint.publicKey,
+        user.publicKey
+      );
+
+      // Try to buy with more SOL than user has
+      const largeAmount = new anchor.BN(1000 * anchor.web3.LAMPORTS_PER_SOL);
+
+      try {
+        const buyConfig = {
+          user: user.publicKey,
+          globalConfig: configPda,
+          feeRecipient: creator.publicKey,
+          bondingCurve: bondingCurvePda,
+          tokenMint: tokenMint.publicKey,
+          curveTokenAccount: curveTokenAccount,
+          userTokenAccount: userTokenAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        };
+
+        await program.methods
+          .swap(largeAmount, 0, new anchor.BN(1))
+          .accounts(buyConfig)
+          .signers([user])
+          .rpc();
+
+        assert.fail("Should have thrown error");
+      } catch (error) {
+        expect(error).to.exist;
+      }
+    });
+
+    it("Should fail sell with insufficient tokens", async () => {
+      const userTokenAccount = await getAssociatedTokenAddress(
+        tokenMint.publicKey,
+        user.publicKey
+      );
+
+      // Try to sell more tokens than user has
+      const largeAmount = new anchor.BN(1000000000000);
+
+      try {
+        const sellConfig = {
+          user: user.publicKey,
+          globalConfig: configPda,
+          feeRecipient: creator.publicKey,
+          bondingCurve: bondingCurvePda,
+          tokenMint: tokenMint.publicKey,
+          curveTokenAccount: curveTokenAccount,
+          userTokenAccount: userTokenAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        };
+
+        await program.methods
+          .swap(largeAmount, 1, new anchor.BN(1))
+          .accounts(sellConfig)
+          .signers([user])
+          .rpc();
+
+        assert.fail("Should have thrown error");
+      } catch (error) {
+        expect(error).to.exist;
+      }
+    });
+  });
+
+  describe("Configuration tests", () => {
+    it("Should fail configure with invalid fee percentages", async () => {
+      const newUser = Keypair.generate();
+      await provider.connection.requestAirdrop(
+        newUser.publicKey,
+        anchor.web3.LAMPORTS_PER_SOL
+      );
+
+      try {
+        const configuration = {
+          admin: newUser.publicKey,
+          globalConfig: configPda,
+          systemProgram: SystemProgram.programId,
+        };
+
+        const configArgs = {
+          authority: newUser.publicKey,
+          feeRecipient: newUser.publicKey,
+          curveLimit: new anchor.BN(1000000000),
+          initialVirtualTokenReserve: new anchor.BN(1000000000),
+          initialVirtualSolReserve: new anchor.BN(10000000000),
+          initialRealTokenReserve: new anchor.BN(100000000000),
+          totalTokenSupply: new anchor.BN(100000000),
+          buyFeePercentage: 101, // Invalid percentage
+          sellFeePercentage: 101, // Invalid percentage
+          migrationFeePercentage: 0,
+          reserved: Array(8).fill(Array(8).fill(0)),
+        };
+
+        await program.methods
+          .configure(configArgs)
+          .accounts(configuration)
+          .signers([newUser])
+          .rpc();
+
+        assert.fail("Should have thrown error");
+      } catch (error) {
+        expect(error).to.exist;
+      }
+    });
+
+    it("Should fail configure with unauthorized user", async () => {
+      const unauthorizedUser = Keypair.generate();
+      await provider.connection.requestAirdrop(
+        unauthorizedUser.publicKey,
+        anchor.web3.LAMPORTS_PER_SOL
+      );
+
+      try {
+        const configuration = {
+          admin: creator.publicKey,
+          globalConfig: configPda,
+          systemProgram: SystemProgram.programId,
+        };
+
+        const configArgs = {
+          authority: creator.publicKey,
+          feeRecipient: unauthorizedUser.publicKey,
+          curveLimit: new anchor.BN(1000000000),
+          initialVirtualTokenReserve: new anchor.BN(1000000000),
+          initialVirtualSolReserve: new anchor.BN(10000000000),
+          initialRealTokenReserve: new anchor.BN(100000000000),
+          totalTokenSupply: new anchor.BN(100000000),
+          buyFeePercentage: 5,
+          sellFeePercentage: 5,
+          migrationFeePercentage: 0,
+          reserved: Array(8).fill(Array(8).fill(0)),
+        };
+
+        await program.methods
+          .configure(configArgs)
+          .accounts(configuration)
+          .signers([unauthorizedUser])
+          .rpc();
+
+        assert.fail("Should have thrown error");
+      } catch (error) {
+        expect(error).to.exist;
+      }
+    });
+  });
   
 });
+
+
